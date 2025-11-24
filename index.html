@@ -3,7 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>可愛貓咪炸彈超人 | Cat Bomber</title>
+    <title>可愛貓咪炸彈超人 3D | Cat Bomber 3D</title>
+    <!-- 引入 Three.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Fredoka+One&family=Varela+Round&display=swap');
 
@@ -29,42 +31,44 @@
         }
 
         h1 {
+            position: absolute;
+            top: 10px;
+            z-index: 5;
             font-family: 'Fredoka One', cursive;
             color: var(--accent);
             text-shadow: 2px 2px 0px #FFF, 4px 4px 0px rgba(0,0,0,0.1);
-            margin: 10px 0;
+            margin: 0;
             font-size: 2.5rem;
+            pointer-events: none;
         }
 
         #game-container {
             position: relative;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.15);
-            border-radius: 12px;
+            width: 100%;
+            height: 100%;
             overflow: hidden;
-            background: #fff;
-        }
-
-        canvas {
-            display: block;
-            background-color: #FBE9E7; /* 地板底色 */
+            background: #87CEEB; /* 天空藍背景 */
         }
 
         #ui-layer {
             position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 40px;
-            background: rgba(255, 255, 255, 0.9);
+            top: 60px; /* 標題下方 */
+            left: 50%;
+            transform: translateX(-50%);
+            width: 90%;
+            max-width: 800px;
+            height: 50px;
+            background: rgba(255, 255, 255, 0.8);
+            border-radius: 25px;
             display: flex;
-            justify-content: space-between;
+            justify-content: space-around;
             align-items: center;
             padding: 0 20px;
             box-sizing: border-box;
             font-weight: bold;
-            font-size: 1.1rem;
+            font-size: 1.2rem;
             z-index: 10;
-            border-bottom: 2px solid var(--ui-bg);
+            box-shadow: 0 4px 10px rgba(0,0,0,0.1);
         }
 
         .hud-item {
@@ -79,13 +83,13 @@
             left: 0;
             width: 100%;
             height: 100%;
-            background: rgba(255, 243, 224, 0.9);
+            background: rgba(255, 243, 224, 0.8);
             display: flex;
             flex-direction: column;
             justify-content: center;
             align-items: center;
             z-index: 20;
-            backdrop-filter: blur(2px);
+            backdrop-filter: blur(5px);
         }
 
         .hidden {
@@ -104,6 +108,7 @@
             box-shadow: 0 5px 0 #E64A19;
             transition: transform 0.1s, box-shadow 0.1s;
             margin-top: 20px;
+            pointer-events: auto;
         }
 
         button:active {
@@ -145,17 +150,11 @@
             font-size: 0.9em;
             font-weight: bold;
         }
-
-        /* 響應式 */
-        @media (max-width: 600px) {
-            h1 { font-size: 1.5rem; }
-            #game-container { transform: scale(0.9); }
-        }
     </style>
 </head>
 <body>
 
-    <h1>🐱 Cat Bomber</h1>
+    <h1>🐱 Cat Bomber 3D</h1>
 
     <div id="game-container">
         <div id="ui-layer">
@@ -173,10 +172,10 @@
             </div>
         </div>
         
-        <canvas id="gameCanvas"></canvas>
+        <!-- Three.js Canvas 會自動插入這裡 -->
 
         <div id="overlay">
-            <div class="msg-title" id="overlay-title">Cat Bomber</div>
+            <div class="msg-title" id="overlay-title">Cat Bomber 3D</div>
             <div class="msg-sub" id="overlay-sub">Help the kitty find the exit!</div>
             <button id="start-btn">START GAME</button>
             
@@ -190,30 +189,27 @@
 
 <script>
 /**
- * Cat Bomber Game Logic
+ * Cat Bomber 3D Game Logic & Rendering
  */
 
-// --- 遊戲常數 ---
-const TILE_SIZE = 40; // 格子大小
+// --- 遊戲邏輯常數 (Logic) ---
+const TILE_SIZE = 40; // 邏輯上的像素單位，我們會除以它來轉成 3D 單位
 const COLS = 13;
 const ROWS = 11;
-const WIDTH = COLS * TILE_SIZE;
-const HEIGHT = ROWS * TILE_SIZE;
+
+// --- 3D 渲染常數 (Rendering) ---
+const UNIT_SIZE = 4; // 3D 世界中一個格子的大小
+const MAP_OFFSET_X = -(COLS * UNIT_SIZE) / 2;
+const MAP_OFFSET_Z = -(ROWS * UNIT_SIZE) / 2;
 
 // --- 實體類型 ---
 const TYPES = {
     FLOOR: 0,
-    WALL_HARD: 1, // 鋼鐵牆（不可破壞）
-    WALL_SOFT: 2, // 磚牆（可破壞）
+    WALL_HARD: 1,
+    WALL_SOFT: 2,
     BOMB: 3,
     EXIT: 9,
 };
-
-// --- 畫布設定 ---
-const canvas = document.getElementById('gameCanvas');
-const ctx = canvas.getContext('2d');
-canvas.width = WIDTH;
-canvas.height = HEIGHT;
 
 // --- UI 元素 ---
 const hudBomb = document.getElementById('hud-bomb');
@@ -224,6 +220,7 @@ const overlay = document.getElementById('overlay');
 const overlayTitle = document.getElementById('overlay-title');
 const overlaySub = document.getElementById('overlay-sub');
 const startBtn = document.getElementById('start-btn');
+const gameContainer = document.getElementById('game-container');
 
 // --- 音效系統 (Web Audio API) ---
 const AudioCtx = window.AudioContext || window.webkitAudioContext;
@@ -239,7 +236,6 @@ const playSound = (type) => {
     const now = audioCtx.currentTime;
 
     if (type === 'plant') {
-        // 放炸彈：短促的啵聲
         osc.type = 'triangle';
         osc.frequency.setValueAtTime(300, now);
         osc.frequency.exponentialRampToValueAtTime(50, now + 0.1);
@@ -248,7 +244,6 @@ const playSound = (type) => {
         osc.start(now);
         osc.stop(now + 0.1);
     } else if (type === 'explode') {
-        // 爆炸：噪音 (模擬) - 這裡用低頻震盪模擬
         osc.type = 'sawtooth';
         osc.frequency.setValueAtTime(100, now);
         osc.frequency.exponentialRampToValueAtTime(10, now + 0.3);
@@ -257,7 +252,6 @@ const playSound = (type) => {
         osc.start(now);
         osc.stop(now + 0.3);
     } else if (type === 'item') {
-        // 道具：清脆鈴聲
         osc.type = 'sine';
         osc.frequency.setValueAtTime(600, now);
         osc.frequency.setValueAtTime(1200, now + 0.1);
@@ -266,7 +260,6 @@ const playSound = (type) => {
         osc.start(now);
         osc.stop(now + 0.3);
     } else if (type === 'win') {
-        // 勝利：大調琶音
         osc.type = 'triangle';
         gainNode.gain.value = 0.3;
         [523.25, 659.25, 783.99, 1046.50].forEach((freq, i) => {
@@ -281,7 +274,6 @@ const playSound = (type) => {
             o.stop(now + i*0.1 + 0.3);
         });
     } else if (type === 'die') {
-        // 失敗：滑落音
         osc.type = 'sawtooth';
         osc.frequency.setValueAtTime(400, now);
         osc.frequency.linearRampToValueAtTime(50, now + 0.5);
@@ -292,35 +284,338 @@ const playSound = (type) => {
     }
 };
 
-// --- 遊戲狀態 ---
-let lastTime = 0;
+// --- Three.js Setup ---
+let scene, camera, renderer;
+let meshes = {
+    walls: [], // 2D array [r][c] -> mesh
+    player: null,
+    enemies: new Map(), // id -> mesh
+    bombs: new Map(),   // id -> mesh
+    items: new Map(),   // id -> mesh
+    explosions: [],     // array of mesh groups
+    particles: []       // array of particle objects
+};
+
+function initThree() {
+    scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x87CEEB); // 天空藍
+    // 霧氣效果，讓邊緣柔和
+    scene.fog = new THREE.Fog(0x87CEEB, 40, 90);
+
+    // 相機 (Perspective)
+    camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 1000);
+    camera.position.set(0, 45, 35); // 高角度俯視
+    camera.lookAt(0, 0, 5);
+
+    // 燈光
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+    scene.add(ambientLight);
+
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.7);
+    dirLight.position.set(20, 40, 20);
+    dirLight.castShadow = true;
+    dirLight.shadow.mapSize.width = 1024;
+    dirLight.shadow.mapSize.height = 1024;
+    dirLight.shadow.camera.left = -40;
+    dirLight.shadow.camera.right = 40;
+    dirLight.shadow.camera.top = 40;
+    dirLight.shadow.camera.bottom = -40;
+    scene.add(dirLight);
+
+    // 渲染器
+    renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    gameContainer.appendChild(renderer.domElement);
+
+    // 建立地板
+    createFloor();
+    
+    // 監聽視窗調整
+    window.addEventListener('resize', () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+}
+
+function createFloor() {
+    // 主地板平面
+    const geometry = new THREE.PlaneGeometry(COLS * UNIT_SIZE, ROWS * UNIT_SIZE);
+    const material = new THREE.MeshStandardMaterial({ color: 0xFBE9E7 });
+    const floor = new THREE.Mesh(geometry, material);
+    floor.rotation.x = -Math.PI / 2;
+    floor.position.set(0, 0, 0); // 中心點
+    floor.receiveShadow = true;
+    scene.add(floor);
+
+    // 格線 (可選，用來增加立體感)
+    const gridHelper = new THREE.GridHelper(COLS * UNIT_SIZE, Math.max(COLS, ROWS), 0xF6D6D6, 0xF6D6D6);
+    gridHelper.position.y = 0.05;
+    scene.add(gridHelper);
+    
+    // 底部裝飾座 (讓地圖看起來像懸浮島)
+    const baseGeo = new THREE.BoxGeometry(COLS * UNIT_SIZE + 2, 5, ROWS * UNIT_SIZE + 2);
+    const baseMat = new THREE.MeshStandardMaterial({ color: 0x8D6E63 });
+    const base = new THREE.Mesh(baseGeo, baseMat);
+    base.position.y = -2.55;
+    base.receiveShadow = true;
+    scene.add(base);
+}
+
+// 建立材質
+const matWallHard = new THREE.MeshStandardMaterial({ color: 0xB0BEC5 });
+const matWallSoft = new THREE.MeshStandardMaterial({ color: 0xA1887F });
+const matPlayer = new THREE.MeshStandardMaterial({ color: 0xFFAB91 }); // 貓身
+const matPlayerFace = new THREE.MeshStandardMaterial({ color: 0xFFCCBC }); // 肚子
+const matBomb = new THREE.MeshStandardMaterial({ color: 0x212121, roughness: 0.2 });
+const matExplosionCore = new THREE.MeshBasicMaterial({ color: 0xFF5722 });
+const matExplosionOuter = new THREE.MeshBasicMaterial({ color: 0xFFEB3B, transparent: true, opacity: 0.8 });
+
+// --- 輔助：座標轉換 ---
+function logicToWorld(lx, ly) {
+    // 邏輯座標 (pixel) -> 3D 世界座標
+    const wx = (lx / TILE_SIZE) * UNIT_SIZE + MAP_OFFSET_X + UNIT_SIZE / 2;
+    const wz = (ly / TILE_SIZE) * UNIT_SIZE + MAP_OFFSET_Z + UNIT_SIZE / 2;
+    return { x: wx, z: wz };
+}
+
+// --- 3D 物件建立函式 ---
+
+function createWallMesh(r, c, type) {
+    const geo = new THREE.BoxGeometry(UNIT_SIZE - 0.2, UNIT_SIZE, UNIT_SIZE - 0.2);
+    const mat = type === TYPES.WALL_HARD ? matWallHard : matWallSoft;
+    const mesh = new THREE.Mesh(geo, mat);
+    
+    const wPos = logicToWorld(c * TILE_SIZE, r * TILE_SIZE);
+    mesh.position.set(wPos.x, UNIT_SIZE / 2, wPos.z);
+    
+    if (type === TYPES.WALL_HARD) {
+        // 硬牆裝飾
+        const innerGeo = new THREE.BoxGeometry(UNIT_SIZE - 1, UNIT_SIZE + 0.1, UNIT_SIZE - 1);
+        const innerMat = new THREE.MeshStandardMaterial({color: 0xCFD8DC});
+        const inner = new THREE.Mesh(innerGeo, innerMat);
+        mesh.add(inner);
+    } else {
+        // 軟牆裝飾 (磚紋)
+        // 簡單用顏色區分即可
+    }
+
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    scene.add(mesh);
+    return mesh;
+}
+
+function createPlayerMesh() {
+    const group = new THREE.Group();
+    
+    // 身體
+    const bodyGeo = new THREE.CylinderGeometry(1.2, 1.4, 2, 16);
+    const body = new THREE.Mesh(bodyGeo, matPlayer);
+    body.position.y = 1;
+    body.castShadow = true;
+    group.add(body);
+
+    // 肚子
+    const bellyGeo = new THREE.SphereGeometry(1.1, 16, 16);
+    const belly = new THREE.Mesh(bellyGeo, matPlayerFace);
+    belly.position.set(0, 0.8, 0.5);
+    belly.scale.set(0.8, 1, 0.5);
+    group.add(belly);
+
+    // 頭
+    const headGeo = new THREE.SphereGeometry(1.6, 16, 16);
+    const head = new THREE.Mesh(headGeo, matPlayer);
+    head.position.y = 2.5;
+    head.castShadow = true;
+    group.add(head);
+
+    // 耳朵
+    const earGeo = new THREE.ConeGeometry(0.5, 1, 4);
+    const earL = new THREE.Mesh(earGeo, matPlayer);
+    earL.position.set(-0.8, 3.5, 0);
+    earL.rotation.z = 0.3;
+    const earR = new THREE.Mesh(earGeo, matPlayer);
+    earR.position.set(0.8, 3.5, 0);
+    earR.rotation.z = -0.3;
+    group.add(earL);
+    group.add(earR);
+
+    // 臉 (眼睛)
+    const eyeGeo = new THREE.SphereGeometry(0.15, 8, 8);
+    const matEye = new THREE.MeshBasicMaterial({color: 0x3E2723});
+    const eyeL = new THREE.Mesh(eyeGeo, matEye);
+    eyeL.position.set(-0.5, 2.5, 1.4);
+    const eyeR = new THREE.Mesh(eyeGeo, matEye);
+    eyeR.position.set(0.5, 2.5, 1.4);
+    group.add(eyeL);
+    group.add(eyeR);
+
+    // 鼻子
+    const nose = new THREE.Mesh(new THREE.SphereGeometry(0.1, 8, 8), new THREE.MeshBasicMaterial({color: 0xD81B60}));
+    nose.position.set(0, 2.3, 1.5);
+    group.add(nose);
+
+    scene.add(group);
+    return group;
+}
+
+function createEnemyMesh(type) {
+    const group = new THREE.Group();
+    
+    if (type === 'slime') {
+        const geo = new THREE.SphereGeometry(1.4, 16, 12, 0, Math.PI * 2, 0, Math.PI * 0.6); // 半圓球
+        const mat = new THREE.MeshStandardMaterial({color: 0x42A5F5, roughness: 0.1});
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.rotation.x = 0; // 朝上
+        mesh.position.y = 0;
+        mesh.scale.y = 0.8;
+        group.add(mesh);
+
+        // 眼睛
+        const eyeGeo = new THREE.SphereGeometry(0.3, 8, 8);
+        const matWhite = new THREE.MeshBasicMaterial({color: 0xFFFFFF});
+        const eyeL = new THREE.Mesh(eyeGeo, matWhite);
+        eyeL.position.set(-0.5, 0.8, 1);
+        const eyeR = new THREE.Mesh(eyeGeo, matWhite);
+        eyeR.position.set(0.5, 0.8, 1);
+        group.add(eyeL);
+        group.add(eyeR);
+        
+        const pupil = new THREE.Mesh(new THREE.SphereGeometry(0.1, 4, 4), new THREE.MeshBasicMaterial({color: 0x000000}));
+        const pL = pupil.clone(); pL.position.set(-0.5, 0.8, 1.25);
+        const pR = pupil.clone(); pR.position.set(0.5, 0.8, 1.25);
+        group.add(pL);
+        group.add(pR);
+
+    } else { // chicken
+        const body = new THREE.Mesh(new THREE.SphereGeometry(1.3, 16, 16), new THREE.MeshStandardMaterial({color: 0xFFEE58}));
+        body.position.y = 1.3;
+        group.add(body);
+        
+        // 嘴巴
+        const beak = new THREE.Mesh(new THREE.ConeGeometry(0.3, 0.6, 4), new THREE.MeshStandardMaterial({color: 0xFF7043}));
+        beak.rotation.x = Math.PI/2;
+        beak.position.set(0, 1.3, 1.3);
+        group.add(beak);
+        
+        // 雞冠
+        const comb = new THREE.Mesh(new THREE.SphereGeometry(0.4, 8, 8), new THREE.MeshStandardMaterial({color: 0xEF5350}));
+        comb.position.set(0, 2.5, 0);
+        group.add(comb);
+    }
+    
+    group.castShadow = true;
+    scene.add(group);
+    return group;
+}
+
+function createBombMesh() {
+    const group = new THREE.Group();
+    const ball = new THREE.Mesh(new THREE.SphereGeometry(1.2, 16, 16), matBomb);
+    ball.position.y = 1.2;
+    ball.castShadow = true;
+    group.add(ball);
+
+    // 蓋子
+    const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.6, 0.4, 8), new THREE.MeshStandardMaterial({color: 0x616161}));
+    cap.position.y = 2.4;
+    group.add(cap);
+    
+    // 導火線
+    const fuse = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.8, 4), new THREE.MeshStandardMaterial({color: 0xFFAB00}));
+    fuse.position.y = 2.8;
+    group.add(fuse);
+    
+    scene.add(group);
+    return group;
+}
+
+function createItemMesh(type) {
+    const group = new THREE.Group();
+    const box = new THREE.Mesh(new THREE.BoxGeometry(2, 2, 2), new THREE.MeshStandardMaterial({color: 0xFFFFFF, transparent: true, opacity: 0.3}));
+    box.position.y = 1;
+    group.add(box);
+    
+    // 內核 icon
+    let color = 0xFFFFFF;
+    if (type === 'bomb') color = 0xEF9A9A;
+    if (type === 'fire') color = 0xFFCC80;
+    if (type === 'speed') color = 0x81D4FA;
+    if (type === 'kick') color = 0xA5D6A7;
+    
+    const core = new THREE.Mesh(new THREE.OctahedronGeometry(0.8), new THREE.MeshStandardMaterial({color: color, emissive: color, emissiveIntensity: 0.5}));
+    core.position.y = 1;
+    // 旋轉動畫在 loop 中做
+    core.userData = { isCore: true };
+    group.add(core);
+
+    scene.add(group);
+    return group;
+}
+
+function createExitMesh(r, c) {
+    const group = new THREE.Group();
+    const doorFrame = new THREE.Mesh(new THREE.BoxGeometry(3, 3, 0.5), new THREE.MeshStandardMaterial({color: 0x333333}));
+    doorFrame.position.y = 1.5;
+    doorFrame.position.z = -1; // 稍微後退
+    group.add(doorFrame);
+    
+    const doorLight = new THREE.Mesh(new THREE.PlaneGeometry(2, 2.5), new THREE.MeshBasicMaterial({color: 0x4FC3F7}));
+    doorLight.position.y = 1.5;
+    doorLight.position.z = -0.7;
+    group.add(doorLight);
+    
+    const wPos = logicToWorld(c * TILE_SIZE, r * TILE_SIZE);
+    group.position.set(wPos.x, 0, wPos.z);
+    
+    scene.add(group);
+    return group;
+}
+
+function createExplosionEffect(c, r, center) {
+    const group = new THREE.Group();
+    const wPos = logicToWorld(c * TILE_SIZE, r * TILE_SIZE);
+    group.position.set(wPos.x, 2, wPos.z);
+
+    const core = new THREE.Mesh(new THREE.BoxGeometry(3.5, 3.5, 3.5), matExplosionCore);
+    group.add(core);
+    
+    const outer = new THREE.Mesh(new THREE.BoxGeometry(4, 4, 4), matExplosionOuter);
+    group.add(outer);
+
+    scene.add(group);
+    meshes.explosions.push({ mesh: group, life: 30, maxLife: 30 });
+}
+
+// --- 遊戲邏輯與狀態 (Logic System) ---
+// (這部分從原本的代碼移植，只做必要修改)
+
 let gameRunning = false;
-let map = []; // 二維陣列
+let map = [];
 let bombs = [];
-let explosions = [];
 let items = [];
 let enemies = [];
-let particles = [];
-let exitPos = {x: 0, y: 0, revealed: false};
+let exitPos = {x: 0, y: 0, revealed: false, mesh: null};
 
-// 玩家物件
+// 玩家邏輯物件
 const player = {
     x: TILE_SIZE,
     y: TILE_SIZE,
     radius: TILE_SIZE * 0.4,
-    speed: 2, // 基礎速度
-    dx: 0,
-    dy: 0,
+    speed: 2,
+    dx: 0, dy: 0,
     maxBombs: 1,
     bombRange: 1,
     hasKick: false,
     speedMulti: 1,
     direction: 'down',
-    walkFrame: 0,
-    dead: false
+    dead: false,
+    id: 'p1'
 };
 
-// --- 輸入控制 ---
 const keys = {};
 window.addEventListener('keydown', e => {
     keys[e.code] = true;
@@ -330,663 +625,207 @@ window.addEventListener('keydown', e => {
 });
 window.addEventListener('keyup', e => keys[e.code] = false);
 
-// --- 初始化地圖 ---
+// 3D 專用：生成 ID
+let _idCounter = 0;
+function getUniqueId() { return _idCounter++; }
+
 function initMap() {
     map = [];
+    meshes.walls = []; // 重置牆壁網格陣列
     let softBlocks = [];
 
-    // 生成牆壁與地板
+    // 清空場景中現有的牆
+    // 這裡我們直接簡單粗暴地重建
+    // (在 resetGame 處理場景清理)
+
     for (let r = 0; r < ROWS; r++) {
         const row = [];
+        const meshRow = [];
         for (let c = 0; c < COLS; c++) {
-            // 邊界必定是硬牆
-            if (r === 0 || r === ROWS - 1 || c === 0 || c === COLS - 1) {
-                row.push(TYPES.WALL_HARD);
-            } 
-            // 棋盤格硬牆 (每隔一格)
-            else if (r % 2 === 0 && c % 2 === 0) {
-                row.push(TYPES.WALL_HARD);
-            } 
-            // 玩家出生點 (左上角) 保留空地
-            else if ((r === 1 && c === 1) || (r === 1 && c === 2) || (r === 2 && c === 1)) {
-                row.push(TYPES.FLOOR);
-            } 
-            // 其他地方隨機生成軟牆
-            else {
-                if (Math.random() < 0.4) { // 40% 機率生成磚牆
-                    row.push(TYPES.WALL_SOFT);
-                    softBlocks.push({r, c});
-                } else {
-                    row.push(TYPES.FLOOR);
-                }
+            let type = TYPES.FLOOR;
+            if (r === 0 || r === ROWS - 1 || c === 0 || c === COLS - 1) type = TYPES.WALL_HARD;
+            else if (r % 2 === 0 && c % 2 === 0) type = TYPES.WALL_HARD;
+            else if ((r === 1 && c === 1) || (r === 1 && c === 2) || (r === 2 && c === 1)) type = TYPES.FLOOR;
+            else if (Math.random() < 0.4) {
+                type = TYPES.WALL_SOFT;
+                softBlocks.push({r, c});
+            }
+            
+            row.push(type);
+            
+            // 建立對應的 3D 牆
+            if (type !== TYPES.FLOOR) {
+                meshRow.push(createWallMesh(r, c, type));
+            } else {
+                meshRow.push(null);
             }
         }
         map.push(row);
+        meshes.walls.push(meshRow);
     }
 
-    // 放置出口 (藏在某個軟牆下，如果沒有軟牆則隨機放)
+    // 出口
     if (softBlocks.length > 0) {
         const exitIdx = Math.floor(Math.random() * softBlocks.length);
-        exitPos = { x: softBlocks[exitIdx].c, y: softBlocks[exitIdx].r, revealed: false };
-        // 從列表中移除，避免出口跟道具重疊 (雖然重疊也沒關係，道具優先)
+        exitPos = { x: softBlocks[exitIdx].c, y: softBlocks[exitIdx].r, revealed: false, mesh: null };
         softBlocks.splice(exitIdx, 1);
     } else {
-        exitPos = { x: COLS-2, y: ROWS-2, revealed: false };
+        exitPos = { x: COLS-2, y: ROWS-2, revealed: false, mesh: null };
     }
 
-    // 放置道具
-    // 簡單規則：隨機選幾個磚塊塞道具
-    const itemsToSpawn = [
-        {type: 'bomb', count: 3}, 
-        {type: 'fire', count: 3}, 
-        {type: 'speed', count: 2}, 
-        {type: 'kick', count: 1}
-    ];
-
+    // 道具
+    const itemsToSpawn = [{type: 'bomb', count: 3}, {type: 'fire', count: 3}, {type: 'speed', count: 2}, {type: 'kick', count: 1}];
+    items = [];
     itemsToSpawn.forEach(it => {
         for(let i=0; i<it.count; i++) {
             if (softBlocks.length > 0) {
                 const idx = Math.floor(Math.random() * softBlocks.length);
                 const pos = softBlocks[idx];
                 items.push({
+                    id: getUniqueId(),
                     x: pos.c, y: pos.r, 
                     type: it.type, 
-                    hidden: true // 隱藏在磚牆下
+                    hidden: true
                 });
                 softBlocks.splice(idx, 1);
             }
         }
     });
 
-    // 生成敵人
+    // 敵人
     enemies = [];
-    let enemyCount = 3 + Math.floor(Math.random() * 2); // 3-4 個敵人
-    let safeZone = 3; // 遠離玩家幾格
-    
+    let enemyCount = 3 + Math.floor(Math.random() * 2);
     while(enemies.length < enemyCount) {
         let er = Math.floor(Math.random() * ROWS);
         let ec = Math.floor(Math.random() * COLS);
-        // 必須是空地，且不在玩家附近
-        if (map[er][ec] === TYPES.FLOOR && (er + ec > safeZone)) {
+        if (map[er][ec] === TYPES.FLOOR && (er + ec > 3)) {
             enemies.push({
+                id: getUniqueId(),
                 x: ec * TILE_SIZE + TILE_SIZE/2,
                 y: er * TILE_SIZE + TILE_SIZE/2,
                 r: er, c: ec,
-                dir: Math.floor(Math.random()*4), // 0:up, 1:down, 2:left, 3:right
+                dir: Math.floor(Math.random()*4),
                 speed: 1 + Math.random() * 0.5,
-                type: Math.random() > 0.5 ? 'slime' : 'chicken',
-                dead: false
+                type: Math.random() > 0.5 ? 'slime' : 'chicken'
             });
         }
     }
 }
 
-// --- 重置遊戲 ---
+function clearScene() {
+    // 移除所有動態物件
+    meshes.enemies.forEach(m => scene.remove(m));
+    meshes.enemies.clear();
+    meshes.bombs.forEach(m => scene.remove(m));
+    meshes.bombs.clear();
+    meshes.items.forEach(m => scene.remove(m));
+    meshes.items.clear();
+    meshes.explosions.forEach(o => scene.remove(o.mesh));
+    meshes.explosions = [];
+    
+    // 移除牆壁
+    if(meshes.walls.length > 0) {
+        for(let r=0; r<ROWS; r++) {
+            for(let c=0; c<COLS; c++) {
+                if(meshes.walls[r][c]) {
+                    scene.remove(meshes.walls[r][c]);
+                }
+            }
+        }
+    }
+    
+    if (meshes.player) {
+        scene.remove(meshes.player);
+        meshes.player = null;
+    }
+    
+    if (exitPos.mesh) {
+        scene.remove(exitPos.mesh);
+        exitPos.mesh = null;
+    }
+}
+
 function resetGame() {
+    clearScene();
+    
     bombs = [];
-    explosions = [];
     items = [];
-    particles = [];
     
     // 重置玩家
     player.x = TILE_SIZE * 1.5;
     player.y = TILE_SIZE * 1.5;
     player.maxBombs = 1;
-    player.bombRange = 1; // 爆炸半徑 (格)
+    player.bombRange = 1;
     player.speedMulti = 1;
     player.hasKick = false;
     player.dead = false;
-    player.walkFrame = 0;
 
+    // 建立 3D 實體
     initMap();
+    meshes.player = createPlayerMesh();
+
+    // --- 關鍵修正：重置攝影機位置為最佳遊玩視角 ---
+    // 調整為更高的俯視角 (Y=70, Z=10)
+    // 這樣接近垂直俯視，視野更開闊
+    camera.position.set(0, 70, 10);
+    camera.lookAt(0, -2, 0); 
+    
     updateHUD();
     gameRunning = true;
     overlay.classList.add('hidden');
-    requestAnimationFrame(gameLoop);
+    
+    // 開始 Loop
+    if (!renderer.info.autoClear) animate(); // hack check if running
 }
 
-// --- 輔助函式 ---
+// --- 邏輯輔助 ---
 function getTile(col, row) {
     if (row < 0 || row >= ROWS || col < 0 || col >= COLS) return TYPES.WALL_HARD;
     return map[row][col];
 }
-
 function setTile(col, row, type) {
     if (row >= 0 && row < ROWS && col >= 0 && col < COLS) {
         map[row][col] = type;
-    }
-}
-
-// 像素轉格子座標
-function toGrid(px) {
-    return Math.floor(px / TILE_SIZE);
-}
-
-// 對齊格子中心
-function snapCenter(val) {
-    return Math.floor(val / TILE_SIZE) * TILE_SIZE + TILE_SIZE / 2;
-}
-
-// 圓形/矩形碰撞檢測
-function circleRectCollide(cx, cy, cr, rx, ry, rw, rh) {
-    let testX = cx;
-    let testY = cy;
-    if (cx < rx) testX = rx;
-    else if (cx > rx + rw) testX = rx + rw;
-    if (cy < ry) testY = ry;
-    else if (cy > ry + rh) testY = ry + rh;
-    let distX = cx - testX;
-    let distY = cy - testY;
-    return (distX * distX + distY * distY) <= (cr * cr);
-}
-
-// --- 繪圖函式 (Canvas Drawing) ---
-
-function drawRoundedRect(x, y, w, h, r, color) {
-    ctx.fillStyle = color;
-    ctx.beginPath();
-    ctx.moveTo(x + r, y);
-    ctx.lineTo(x + w - r, y);
-    ctx.quadraticCurveTo(x + w, y, x + w, y + r);
-    ctx.lineTo(x + w, y + h - r);
-    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
-    ctx.lineTo(x + r, y + h);
-    ctx.quadraticCurveTo(x, y + h, x, y + h - r);
-    ctx.lineTo(x, y + r);
-    ctx.quadraticCurveTo(x, y, x + r, y);
-    ctx.fill();
-}
-
-function drawCat(x, y, dir, frame) {
-    // 身體 bobbing 動畫
-    let bob = Math.sin(frame * 0.2) * 2;
-    
-    ctx.save();
-    ctx.translate(x, y + bob);
-
-    // 陰影
-    ctx.fillStyle = "rgba(0,0,0,0.2)";
-    ctx.beginPath();
-    ctx.ellipse(0, 16, 12, 6, 0, 0, Math.PI * 2);
-    ctx.fill();
-
-    // 身體
-    ctx.fillStyle = "#FFAB91"; // 橘色
-    drawRoundedRect(-12, -10, 24, 20, 8, "#FFAB91");
-
-    // 肚肚
-    ctx.fillStyle = "#FFCCBC";
-    ctx.beginPath();
-    ctx.arc(0, 0, 8, 0, Math.PI * 2);
-    ctx.fill();
-
-    // 頭
-    ctx.fillStyle = "#FFAB91"; // 橘色
-    ctx.beginPath();
-    ctx.arc(0, -12, 16, 0, Math.PI * 2);
-    ctx.fill();
-
-    // 耳朵
-    ctx.beginPath();
-    ctx.moveTo(-12, -20);
-    ctx.lineTo(-4, -24);
-    ctx.lineTo(-14, -8);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.moveTo(12, -20);
-    ctx.lineTo(4, -24);
-    ctx.lineTo(14, -8);
-    ctx.fill();
-
-    // 臉部
-    ctx.fillStyle = "#3E2723";
-    // 眼睛
-    if (player.dead) {
-        // X X 眼
-        ctx.lineWidth = 2;
-        ctx.strokeStyle = "#3E2723";
-        ctx.beginPath(); ctx.moveTo(-6, -14); ctx.lineTo(-2, -10); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(-2, -14); ctx.lineTo(-6, -10); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(6, -14); ctx.lineTo(2, -10); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(2, -14); ctx.lineTo(6, -10); ctx.stroke();
-    } else {
-        ctx.beginPath(); ctx.arc(-5, -12, 2, 0, Math.PI * 2); ctx.fill();
-        ctx.beginPath(); ctx.arc(5, -12, 2, 0, Math.PI * 2); ctx.fill();
-    }
-    
-    // 鼻子嘴巴
-    ctx.fillStyle = "#D81B60";
-    ctx.beginPath(); ctx.arc(0, -8, 1.5, 0, Math.PI * 2); ctx.fill();
-    
-    ctx.beginPath();
-    ctx.moveTo(0, -8);
-    ctx.lineTo(-2, -5);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(0, -8);
-    ctx.lineTo(2, -5);
-    ctx.stroke();
-
-    // 鬍鬚
-    ctx.strokeStyle = "#3E2723";
-    ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(-12, -10); ctx.lineTo(-18, -12); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(-12, -8); ctx.lineTo(-18, -6); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(12, -10); ctx.lineTo(18, -12); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(12, -8); ctx.lineTo(18, -6); ctx.stroke();
-
-    ctx.restore();
-}
-
-function drawEnemy(e) {
-    ctx.save();
-    ctx.translate(e.x, e.y);
-    let bob = Math.sin(Date.now() / 150) * 3;
-    
-    // 陰影
-    ctx.fillStyle = "rgba(0,0,0,0.2)";
-    ctx.beginPath(); ctx.ellipse(0, 14, 10, 4, 0, 0, Math.PI*2); ctx.fill();
-
-    if (e.type === 'slime') {
-        // 史萊姆 (藍色)
-        ctx.fillStyle = "#42A5F5";
-        ctx.beginPath();
-        ctx.arc(0, -5 + bob, 14, Math.PI, 0); // 上半圓
-        ctx.lineTo(14, 5 + bob);
-        ctx.quadraticCurveTo(0, 15+bob, -14, 5+bob);
-        ctx.fill();
-        
-        // 臉
-        ctx.fillStyle = "white";
-        ctx.beginPath(); ctx.arc(-4, -5+bob, 3, 0, Math.PI*2); ctx.fill();
-        ctx.beginPath(); ctx.arc(4, -5+bob, 3, 0, Math.PI*2); ctx.fill();
-        ctx.fillStyle = "black";
-        ctx.beginPath(); ctx.arc(-4, -5+bob, 1, 0, Math.PI*2); ctx.fill();
-        ctx.beginPath(); ctx.arc(4, -5+bob, 1, 0, Math.PI*2); ctx.fill();
-    } else {
-        // 小雞 (黃色)
-        ctx.fillStyle = "#FFEE58";
-        ctx.beginPath(); ctx.arc(0, 0 + bob, 13, 0, Math.PI*2); ctx.fill();
-        // 雞冠
-        ctx.fillStyle = "#EF5350";
-        ctx.beginPath(); ctx.arc(0, -12+bob, 4, 0, Math.PI*2); ctx.fill();
-        // 嘴
-        ctx.fillStyle = "#FF7043";
-        ctx.beginPath(); ctx.moveTo(0, 0+bob); ctx.lineTo(6, 3+bob); ctx.lineTo(0, 6+bob); ctx.fill();
-        // 眼
-        ctx.fillStyle = "black";
-        ctx.beginPath(); ctx.arc(-4, -3+bob, 2, 0, Math.PI*2); ctx.fill();
-        ctx.beginPath(); ctx.arc(4, -3+bob, 2, 0, Math.PI*2); ctx.fill();
-    }
-    ctx.restore();
-}
-
-function drawMap() {
-    for (let r = 0; r < ROWS; r++) {
-        for (let c = 0; c < COLS; c++) {
-            let x = c * TILE_SIZE;
-            let y = r * TILE_SIZE;
-            let type = map[r][c];
-
-            // 地板 (格線)
-            ctx.strokeStyle = "#F6D6D6";
-            ctx.lineWidth = 1;
-            ctx.strokeRect(x, y, TILE_SIZE, TILE_SIZE);
-
-            if (type === TYPES.WALL_HARD) {
-                // 硬牆：灰色立體
-                ctx.fillStyle = "#B0BEC5";
-                ctx.fillRect(x, y, TILE_SIZE, TILE_SIZE);
-                ctx.fillStyle = "#CFD8DC"; // High light
-                ctx.fillRect(x, y, TILE_SIZE-4, TILE_SIZE-4);
-                ctx.fillStyle = "#90A4AE"; // Shadow
-                ctx.fillRect(x+4, y+4, TILE_SIZE-4, TILE_SIZE-4);
-                ctx.fillStyle = "#B0BEC5"; // Face
-                ctx.fillRect(x+2, y+2, TILE_SIZE-4, TILE_SIZE-4);
-            } 
-            else if (type === TYPES.WALL_SOFT) {
-                // 磚牆：棕色
-                ctx.fillStyle = "#A1887F";
-                ctx.fillRect(x+1, y+1, TILE_SIZE-2, TILE_SIZE-2);
-                // 磚紋
-                ctx.fillStyle = "#8D6E63";
-                ctx.fillRect(x+2, y+5, 16, 8);
-                ctx.fillRect(x+20, y+5, 16, 8);
-                ctx.fillRect(x+5, y+18, 16, 8);
-                ctx.fillRect(x+24, y+18, 12, 8);
-                ctx.fillRect(x+2, y+30, 16, 8);
-                ctx.fillRect(x+20, y+30, 16, 8);
-            }
-        }
-    }
-
-    // 畫出口
-    if (exitPos.revealed) {
-        let x = exitPos.x * TILE_SIZE;
-        let y = exitPos.y * TILE_SIZE;
-        ctx.fillStyle = "#333";
-        ctx.fillRect(x+5, y+5, 30, 30);
-        ctx.fillStyle = "#4FC3F7"; // 門內光
-        ctx.fillRect(x+8, y+8, 24, 24);
-        ctx.font = "20px Arial";
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        ctx.fillText("EXIT", x+20, y+20);
-    }
-}
-
-function drawBombs() {
-    bombs.forEach(b => {
-        let x = b.c * TILE_SIZE + TILE_SIZE/2;
-        let y = b.r * TILE_SIZE + TILE_SIZE/2;
-        
-        // 炸彈本體
-        ctx.fillStyle = "#212121";
-        ctx.beginPath();
-        // 脈動效果
-        let scale = 1 + Math.sin(Date.now() / 100) * 0.1;
-        ctx.arc(x, y + 2, 14 * scale, 0, Math.PI * 2);
-        ctx.fill();
-
-        // 高光
-        ctx.fillStyle = "#616161";
-        ctx.beginPath();
-        ctx.arc(x - 5, y - 5, 4 * scale, 0, Math.PI * 2);
-        ctx.fill();
-
-        // 導火線
-        ctx.strokeStyle = "#FFAB00";
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(x, y - 12);
-        ctx.quadraticCurveTo(x + 5, y - 18, x + 8, y - 14);
-        ctx.stroke();
-
-        // 火花
-        if (Math.floor(Date.now() / 50) % 2 === 0) {
-            ctx.fillStyle = "#FF5722";
-            ctx.beginPath();
-            ctx.arc(x+8, y-14, 3, 0, Math.PI*2);
-            ctx.fill();
-        }
-    });
-}
-
-function drawExplosions() {
-    explosions.forEach(exp => {
-        let alpha = exp.timer / 30; // 淡出
-        ctx.globalAlpha = alpha;
-        
-        // 中心
-        drawExplosionCell(exp.c, exp.r, true);
-
-        // 手臂
-        exp.cells.forEach(cell => {
-            drawExplosionCell(cell.c, cell.r, false);
-        });
-
-        ctx.globalAlpha = 1.0;
-    });
-}
-
-function drawExplosionCell(c, r, center) {
-    let x = c * TILE_SIZE;
-    let y = r * TILE_SIZE;
-    
-    // 背景光
-    ctx.fillStyle = "#FFEB3B";
-    ctx.fillRect(x, y, TILE_SIZE, TILE_SIZE);
-    
-    // 核心
-    ctx.fillStyle = "#FF5722";
-    let margin = 5;
-    if (center) margin = 2;
-    drawRoundedRect(x + margin, y + margin, TILE_SIZE - margin*2, TILE_SIZE - margin*2, 8, "#FF5722");
-
-    // 星星裝飾
-    ctx.fillStyle = "#FFF";
-    ctx.beginPath();
-    ctx.arc(x + TILE_SIZE/2, y + TILE_SIZE/2, 4, 0, Math.PI*2);
-    ctx.fill();
-}
-
-function drawItems() {
-    items.forEach(it => {
-        if (it.hidden) return;
-        let x = it.x * TILE_SIZE + TILE_SIZE/2;
-        let y = it.y * TILE_SIZE + TILE_SIZE/2;
-
-        let icon = '';
-        let color = '';
-        
-        switch(it.type) {
-            case 'bomb': icon = '💣'; color = '#EF9A9A'; break;
-            case 'fire': icon = '🔥'; color = '#FFCC80'; break;
-            case 'speed': icon = '👟'; color = '#81D4FA'; break;
-            case 'kick': icon = '👞'; color = '#A5D6A7'; break;
-        }
-
-        // 道具框
-        ctx.fillStyle = color;
-        drawRoundedRect(x - 14, y - 14, 28, 28, 6, color);
-        ctx.strokeStyle = "white";
-        ctx.lineWidth = 2;
-        ctx.strokeRect(x - 14, y - 14, 28, 28);
-
-        // 圖示
-        ctx.font = "16px Arial";
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        ctx.fillStyle = "#333";
-        ctx.fillText(icon, x, y + 2);
-    });
-}
-
-// --- 遊戲邏輯 ---
-
-function placeBomb() {
-    let pc = toGrid(player.x);
-    let pr = toGrid(player.y);
-
-    // 檢查數量限制
-    let activeBombs = bombs.filter(b => b.owner === 'player').length;
-    if (activeBombs >= player.maxBombs) return;
-
-    // 檢查該格是否已有炸彈
-    if (bombs.some(b => b.c === pc && b.r === pr)) return;
-
-    bombs.push({
-        r: pr, c: pc,
-        timer: 180, // 3 秒 (60fps * 3)
-        range: player.bombRange,
-        owner: 'player',
-        slidingX: 0, 
-        slidingY: 0
-    });
-    
-    // 更新地圖標記為不可通行（如果不是已在裡面）
-    // 注意：炸彈剛放下時玩家還在裡面，所以不能立刻設為 WALL_HARD
-    // 我們使用動態碰撞：如果玩家重疊炸彈，不碰撞；一旦離開，則視為障礙
-    
-    playSound('plant');
-}
-
-function explodeBomb(bomb) {
-    let centerC = bomb.c;
-    let centerR = bomb.r;
-    let range = bomb.range;
-
-    // 從列表移除
-    bombs = bombs.filter(b => b !== bomb);
-    playSound('explode');
-
-    // 產生爆炸物件
-    let explosion = {
-        c: centerC, r: centerR,
-        timer: 30, // 持續 0.5 秒
-        cells: []
-    };
-
-    // 計算爆炸範圍 (十字)
-    const dirs = [{dx:0, dy:-1}, {dx:0, dy:1}, {dx:-1, dy:0}, {dx:1, dy:0}];
-    
-    dirs.forEach(d => {
-        for(let i=1; i<=range; i++) {
-            let nc = centerC + d.dx * i;
-            let nr = centerR + d.dy * i;
-            let type = getTile(nc, nr);
-
-            if (type === TYPES.WALL_HARD) break; // 鋼牆阻擋
-
-            explosion.cells.push({c: nc, r: nr});
-
-            if (type === TYPES.WALL_SOFT) {
-                // 炸毀軟牆
-                setTile(nc, nr, TYPES.FLOOR);
-                // 產生破碎特效 (簡單粒子)
-                createParticles(nc * TILE_SIZE + TILE_SIZE/2, nr * TILE_SIZE + TILE_SIZE/2, "#8D6E63");
-                
-                // 顯示該格的道具或出口
-                items.forEach(it => {
-                    if (it.x === nc && it.y === nr) it.hidden = false;
-                });
-                if (exitPos.x === nc && exitPos.y === nr) exitPos.revealed = true;
-                
-                break; // 軟牆阻擋後續火光
-            }
-
-            // 連鎖引爆其他炸彈
-            let otherBomb = bombs.find(b => b.c === nc && b.r === nr);
-            if (otherBomb) {
-                // 延遲一點點引爆避免同時計算問題，或者直接引爆
-                // 簡單起見，直接遞迴縮短時間
-                otherBomb.timer = 1; 
-            }
-        }
-    });
-    
-    explosions.push(explosion);
-}
-
-function createParticles(x, y, color) {
-    for(let i=0; i<8; i++) {
-        particles.push({
-            x: x, y: y,
-            vx: (Math.random() - 0.5) * 4,
-            vy: (Math.random() - 0.5) * 4,
-            life: 30,
-            color: color
-        });
-    }
-}
-
-function movePlayer() {
-    if (player.dead) return;
-
-    player.dx = 0;
-    player.dy = 0;
-    let speed = player.speed * player.speedMulti;
-
-    if (keys['ArrowUp']) { player.dy = -speed; player.direction = 'up'; }
-    if (keys['ArrowDown']) { player.dy = speed; player.direction = 'down'; }
-    if (keys['ArrowLeft']) { player.dx = -speed; player.direction = 'left'; }
-    if (keys['ArrowRight']) { player.dx = speed; player.direction = 'right'; }
-
-    // X 軸移動與碰撞
-    if (player.dx !== 0) {
-        let newX = player.x + player.dx;
-        if (!checkCollision(newX, player.y)) {
-            player.x = newX;
-        } else {
-            // 滑動修正 (Corner sliding)
-            let gridY = toGrid(player.y);
-            let snapY = gridY * TILE_SIZE + TILE_SIZE/2;
-            if (Math.abs(player.y - snapY) < TILE_SIZE/3) {
-                if (player.y < snapY) player.y++;
-                else player.y--;
-            }
-        }
-    }
-
-    // Y 軸移動與碰撞
-    if (player.dy !== 0) {
-        let newY = player.y + player.dy;
-        if (!checkCollision(player.x, newY)) {
-            player.y = newY;
-        } else {
-            // 滑動修正
-            let gridX = toGrid(player.x);
-            let snapX = gridX * TILE_SIZE + TILE_SIZE/2;
-            if (Math.abs(player.x - snapX) < TILE_SIZE/3) {
-                if (player.x < snapX) player.x++;
-                else player.x--;
-            }
-        }
-    }
-
-    // 走路動畫
-    if (player.dx !== 0 || player.dy !== 0) {
-        player.walkFrame++;
-    } else {
-        player.walkFrame = 0;
-    }
-
-    // 撿道具
-    let pc = toGrid(player.x);
-    let pr = toGrid(player.y);
-    let itemIdx = items.findIndex(it => !it.hidden && it.x === pc && it.y === pr);
-    if (itemIdx !== -1) {
-        let it = items[itemIdx];
-        items.splice(itemIdx, 1);
-        playSound('item');
-        
-        if (it.type === 'bomb') player.maxBombs++;
-        if (it.type === 'fire') player.bombRange++;
-        if (it.type === 'speed') player.speedMulti = Math.min(player.speedMulti + 0.3, 2.0); // 上限
-        if (it.type === 'kick') player.hasKick = true;
-        
-        updateHUD();
-        
-        // 浮動文字特效
-        createParticles(player.x, player.y, "#FFD700");
-    }
-
-    // 踢炸彈邏輯
-    if (player.hasKick) {
-        bombs.forEach(b => {
-            if (b.slidingX === 0 && b.slidingY === 0) {
-                // 簡單判定：如果玩家中心很靠近炸彈中心，且正在移動
-                let dist = Math.hypot(player.x - (b.c * TILE_SIZE + TILE_SIZE/2), player.y - (b.r * TILE_SIZE + TILE_SIZE/2));
-                if (dist < TILE_SIZE * 0.8) {
-                    if (keys['ArrowRight'] && player.dx > 0 && player.x < (b.c*TILE_SIZE)) b.slidingX = 1;
-                    else if (keys['ArrowLeft'] && player.dx < 0 && player.x > (b.c*TILE_SIZE + TILE_SIZE)) b.slidingX = -1;
-                    else if (keys['ArrowDown'] && player.dy > 0 && player.y < (b.r*TILE_SIZE)) b.slidingY = 1;
-                    else if (keys['ArrowUp'] && player.dy < 0 && player.y > (b.r*TILE_SIZE + TILE_SIZE)) b.slidingY = -1;
-                }
-            }
-        });
-    }
-
-    // 出口判定
-    if (enemies.length === 0 && exitPos.revealed) {
-        let dist = Math.hypot(player.x - (exitPos.x * TILE_SIZE + TILE_SIZE/2), player.y - (exitPos.y * TILE_SIZE + TILE_SIZE/2));
-        if (dist < 10) {
-            gameWin();
+        // 3D 同步：移除牆壁 Mesh
+        if (type === TYPES.FLOOR && meshes.walls[row][col]) {
+            scene.remove(meshes.walls[row][col]);
+            meshes.walls[row][col] = null;
+            
+            // 粒子特效
+            createDebris(col, row);
         }
     }
 }
+function createDebris(c, r) {
+    // 簡單的方塊粒子
+    const wPos = logicToWorld(c * TILE_SIZE, r * TILE_SIZE);
+    for(let i=0; i<5; i++) {
+        const geo = new THREE.BoxGeometry(0.8, 0.8, 0.8);
+        const mat = new THREE.MeshBasicMaterial({color: 0x8D6E63});
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.position.set(wPos.x, 1, wPos.z);
+        
+        const velocity = {
+            x: (Math.random() - 0.5) * 0.5,
+            y: Math.random() * 0.5,
+            z: (Math.random() - 0.5) * 0.5
+        };
+        scene.add(mesh);
+        meshes.particles.push({mesh, velocity, life: 60});
+    }
+}
+
+function toGrid(px) { return Math.floor(px / TILE_SIZE); }
+function snapCenter(val) { return Math.floor(val / TILE_SIZE) * TILE_SIZE + TILE_SIZE / 2; }
 
 function checkCollision(x, y) {
-    // 檢查四個角
-    let r = player.radius - 2; // 稍微小一點讓手感好一點
+    let r = player.radius - 2;
     let points = [
         {c: toGrid(x-r), r: toGrid(y-r)},
         {c: toGrid(x+r), r: toGrid(y-r)},
         {c: toGrid(x-r), r: toGrid(y+r)},
         {c: toGrid(x+r), r: toGrid(y+r)}
     ];
-
-    // 新增：計算當前位置的格子點，用來判斷是否"已經"在炸彈內部
     let currPoints = [
         {c: toGrid(player.x-r), r: toGrid(player.y-r)},
         {c: toGrid(player.x+r), r: toGrid(player.y-r)},
@@ -995,22 +834,90 @@ function checkCollision(x, y) {
     ];
 
     for(let p of points) {
-        // 牆壁
         if (getTile(p.c, p.r) !== TYPES.FLOOR) return true;
-        
-        // 炸彈
         let bomb = bombs.find(b => b.c === p.c && b.r === p.r);
         if (bomb) {
-             // 修正判定：檢查玩家「目前」是否與該炸彈重疊
-             // 如果當前的角有任何一個在該炸彈的格子內，表示玩家還沒走出去，允許移動
              let isInside = currPoints.some(cp => cp.c === bomb.c && cp.r === bomb.r);
-
-             if (!isInside) {
-                 return true; // 如果不在裡面，則視為實體，發生碰撞
-             }
+             if (!isInside) return true;
         }
     }
     return false;
+}
+
+function placeBomb() {
+    let pc = toGrid(player.x);
+    let pr = toGrid(player.y);
+    let activeBombs = bombs.filter(b => b.owner === 'player').length;
+    if (activeBombs >= player.maxBombs) return;
+    if (bombs.some(b => b.c === pc && b.r === pr)) return;
+
+    const id = getUniqueId();
+    bombs.push({
+        id: id,
+        r: pr, c: pc,
+        timer: 180,
+        range: player.bombRange,
+        owner: 'player',
+        slidingX: 0, slidingY: 0
+    });
+    
+    // 3D 建立炸彈
+    const mesh = createBombMesh();
+    const wPos = logicToWorld(pc * TILE_SIZE, pr * TILE_SIZE);
+    mesh.position.set(wPos.x, 0, wPos.z);
+    meshes.bombs.set(id, mesh);
+
+    playSound('plant');
+}
+
+function explodeBomb(bomb) {
+    let centerC = bomb.c;
+    let centerR = bomb.r;
+    let range = bomb.range;
+
+    bombs = bombs.filter(b => b !== bomb);
+    // 3D 移除炸彈
+    if (meshes.bombs.has(bomb.id)) {
+        scene.remove(meshes.bombs.get(bomb.id));
+        meshes.bombs.delete(bomb.id);
+    }
+    playSound('explode');
+
+    // 爆炸特效
+    createExplosionEffect(centerC, centerR, true);
+
+    const dirs = [{dx:0, dy:-1}, {dx:0, dy:1}, {dx:-1, dy:0}, {dx:1, dy:0}];
+    
+    dirs.forEach(d => {
+        for(let i=1; i<=range; i++) {
+            let nc = centerC + d.dx * i;
+            let nr = centerR + d.dy * i;
+            let type = getTile(nc, nr);
+
+            if (type === TYPES.WALL_HARD) break;
+
+            // 產生爆炸視覺
+            createExplosionEffect(nc, nr, false);
+
+            // 檢查傷害判定 (玩家)
+            if (toGrid(player.x) === nc && toGrid(player.y) === nr) gameOver();
+            // 檢查中心點傷害
+            if (toGrid(player.x) === centerC && toGrid(player.y) === centerR) gameOver();
+
+            if (type === TYPES.WALL_SOFT) {
+                setTile(nc, nr, TYPES.FLOOR);
+                // 檢查道具顯示
+                items.forEach(it => {
+                    if (it.x === nc && it.y === nr) it.hidden = false;
+                });
+                if (exitPos.x === nc && exitPos.y === nr) exitPos.revealed = true;
+                break;
+            }
+
+            let otherBomb = bombs.find(b => b.c === nc && b.r === nr);
+            if (otherBomb) otherBomb.timer = 1;
+        }
+    });
 }
 
 function updateHUD() {
@@ -1023,6 +930,13 @@ function updateHUD() {
 function gameOver() {
     gameRunning = false;
     player.dead = true;
+    
+    // 3D 玩家倒下
+    if (meshes.player) {
+        meshes.player.rotation.z = Math.PI / 2;
+        meshes.player.position.y = 0.5;
+    }
+    
     playSound('die');
     overlayTitle.textContent = "GAME OVER";
     overlayTitle.style.color = "#D32F2F";
@@ -1041,177 +955,289 @@ function gameWin() {
     overlay.classList.remove('hidden');
 }
 
-function gameLoop(timestamp) {
-    if (!gameRunning) {
-        // 即便不跑遊戲邏輯，也要畫出來最後一幀
-        // draw(); 
-        return; 
-    }
-    
-    // --- Update ---
-    
-    // Player
-    movePlayer();
+// --- 主要遊戲迴圈 ---
 
-    // Bombs logic
-    for (let i = bombs.length - 1; i >= 0; i--) {
-        let b = bombs[i];
-        
-        // 滑動邏輯
-        if (b.slidingX !== 0 || b.slidingY !== 0) {
-            // 每幾幀移動一格的速度
-            // 這裡簡化：每 5 幀移動 1 格
-            if (!b.slideCounter) b.slideCounter = 0;
-            b.slideCounter++;
-            if (b.slideCounter > 4) {
-                let nc = b.c + b.slidingX;
-                let nr = b.r + b.slidingY;
-                let nextTile = getTile(nc, nr);
-                // 檢查是否有障礙物或炸彈或敵人
-                let hasBomb = bombs.some(obs => obs.c === nc && obs.r === nr);
-                let hasEnemy = enemies.some(e => e.c === nc && e.r === nr); // 撞到敵人停止
-                
-                if (nextTile === TYPES.FLOOR && !hasBomb && !hasEnemy) {
-                    b.c = nc;
-                    b.r = nr;
-                } else {
-                    b.slidingX = 0;
-                    b.slidingY = 0;
+function animate() {
+    requestAnimationFrame(animate);
+
+    if (gameRunning && !player.dead) {
+        // --- 玩家移動 ---
+        player.dx = 0; player.dy = 0;
+        let speed = player.speed * player.speedMulti;
+        if (keys['ArrowUp']) { player.dy = -speed; player.direction = 'up'; }
+        if (keys['ArrowDown']) { player.dy = speed; player.direction = 'down'; }
+        if (keys['ArrowLeft']) { player.dx = -speed; player.direction = 'left'; }
+        if (keys['ArrowRight']) { player.dx = speed; player.direction = 'right'; }
+
+        if (player.dx !== 0) {
+            let newX = player.x + player.dx;
+            if (!checkCollision(newX, player.y)) player.x = newX;
+            else {
+                let gridY = toGrid(player.y);
+                let snapY = gridY * TILE_SIZE + TILE_SIZE/2;
+                if (Math.abs(player.y - snapY) < TILE_SIZE/3) {
+                    if (player.y < snapY) player.y++; else player.y--;
                 }
-                b.slideCounter = 0;
+            }
+        }
+        if (player.dy !== 0) {
+            let newY = player.y + player.dy;
+            if (!checkCollision(player.x, newY)) player.y = newY;
+            else {
+                let gridX = toGrid(player.x);
+                let snapX = gridX * TILE_SIZE + TILE_SIZE/2;
+                if (Math.abs(player.x - snapX) < TILE_SIZE/3) {
+                    if (player.x < snapX) player.x++; else player.x--;
+                }
             }
         }
 
-        b.timer--;
-        if (b.timer <= 0) {
-            explodeBomb(b);
-        }
-    }
-
-    // Explosions logic
-    for (let i = explosions.length - 1; i >= 0; i--) {
-        let ex = explosions[i];
-        ex.timer--;
-        if (ex.timer <= 0) {
-            explosions.splice(i, 1);
-            continue;
-        }
-
-        // 檢查傷害判定 (玩家)
-        // 中心
-        if (toGrid(player.x) === ex.c && toGrid(player.y) === ex.r) gameOver();
-        // 手臂
-        ex.cells.forEach(cell => {
-            if (toGrid(player.x) === cell.c && toGrid(player.y) === cell.r) gameOver();
-        });
-    }
-
-    // Enemies Logic
-    for (let i = enemies.length - 1; i >= 0; i--) {
-        let e = enemies[i];
-        
-        // 移動
-        let dirs = [[0,-1], [0,1], [-1,0], [1,0]]; // up, down, left, right
-        let move = dirs[e.dir];
-        let newX = e.x + move[0] * e.speed;
-        let newY = e.y + move[1] * e.speed;
-        
-        // 簡單碰撞 (針對中心點)
-        let cr = toGrid(newY);
-        let cc = toGrid(newX);
-        
-        // 撞牆或撞炸彈換方向
-        let tile = getTile(cc, cr);
-        let hitBomb = bombs.some(b => b.c === cc && b.r === cr);
-        
-        if (tile !== TYPES.FLOOR || hitBomb) {
-            // 隨機換方向
-            e.dir = Math.floor(Math.random() * 4);
-        } else {
-            // 中心點對齊修正 (避免卡牆角)
-            if (e.dir < 2) { // 垂直移動，修正 X
-                e.x = snapCenter(e.x);
-                e.y = newY;
-            } else { // 水平移動，修正 Y
-                e.x = newX;
-                e.y = snapCenter(e.y);
+        // 3D 同步玩家位置
+        if (meshes.player) {
+            const wPos = logicToWorld(player.x, player.y);
+            meshes.player.position.x = wPos.x;
+            meshes.player.position.z = wPos.z;
+            
+            // 轉向
+            if (player.direction === 'up') meshes.player.rotation.y = Math.PI;
+            if (player.direction === 'down') meshes.player.rotation.y = 0;
+            if (player.direction === 'left') meshes.player.rotation.y = -Math.PI/2;
+            if (player.direction === 'right') meshes.player.rotation.y = Math.PI/2;
+            
+            // 走路動畫 (Bobbing)
+            if (player.dx !== 0 || player.dy !== 0) {
+                meshes.player.position.y = Math.sin(Date.now() / 100) * 0.2;
+            } else {
+                meshes.player.position.y = 0;
             }
-            // 更新 Grid 座標
-            e.c = toGrid(e.x);
-            e.r = toGrid(e.y);
         }
 
-        // 碰玩家
-        let dist = Math.hypot(e.x - player.x, e.y - player.y);
-        if (dist < TILE_SIZE * 0.8) {
-            gameOver();
-        }
-
-        // 碰爆炸
-        let hitExplosion = false;
-        explosions.forEach(ex => {
-            if ((ex.c === e.c && ex.r === e.r) || 
-                ex.cells.some(cell => cell.c === e.c && cell.r === e.r)) {
-                hitExplosion = true;
+        // --- 撿道具 ---
+        let pc = toGrid(player.x);
+        let pr = toGrid(player.y);
+        let itemIdx = items.findIndex(it => !it.hidden && it.x === pc && it.y === pr);
+        if (itemIdx !== -1) {
+            let it = items[itemIdx];
+            items.splice(itemIdx, 1);
+            
+            // 3D 移除
+            if (meshes.items.has(it.id)) {
+                scene.remove(meshes.items.get(it.id));
+                meshes.items.delete(it.id);
             }
-        });
-
-        if (hitExplosion) {
-            enemies.splice(i, 1);
-            createParticles(e.x, e.y, "#9C27B0");
+            playSound('item');
+            
+            if (it.type === 'bomb') player.maxBombs++;
+            if (it.type === 'fire') player.bombRange++;
+            if (it.type === 'speed') player.speedMulti = Math.min(player.speedMulti + 0.3, 2.0);
+            if (it.type === 'kick') player.hasKick = true;
             updateHUD();
         }
+
+        // --- 踢炸彈 ---
+        if (player.hasKick) {
+            bombs.forEach(b => {
+                if (b.slidingX === 0 && b.slidingY === 0) {
+                    let dist = Math.hypot(player.x - (b.c * TILE_SIZE + TILE_SIZE/2), player.y - (b.r * TILE_SIZE + TILE_SIZE/2));
+                    if (dist < TILE_SIZE * 0.8) {
+                        if (keys['ArrowRight'] && player.dx > 0 && player.x < (b.c*TILE_SIZE)) b.slidingX = 1;
+                        else if (keys['ArrowLeft'] && player.dx < 0 && player.x > (b.c*TILE_SIZE + TILE_SIZE)) b.slidingX = -1;
+                        else if (keys['ArrowDown'] && player.dy > 0 && player.y < (b.r*TILE_SIZE)) b.slidingY = 1;
+                        else if (keys['ArrowUp'] && player.dy < 0 && player.y > (b.r*TILE_SIZE + TILE_SIZE)) b.slidingY = -1;
+                    }
+                }
+            });
+        }
+
+        // --- 炸彈更新 ---
+        for (let i = bombs.length - 1; i >= 0; i--) {
+            let b = bombs[i];
+            
+            // 滑動
+            if (b.slidingX !== 0 || b.slidingY !== 0) {
+                if (!b.slideCounter) b.slideCounter = 0;
+                b.slideCounter++;
+                if (b.slideCounter > 4) {
+                    let nc = b.c + b.slidingX;
+                    let nr = b.r + b.slidingY;
+                    let nextTile = getTile(nc, nr);
+                    let hasBomb = bombs.some(obs => obs.c === nc && obs.r === nr);
+                    let hasEnemy = enemies.some(e => e.c === nc && e.r === nr);
+                    
+                    if (nextTile === TYPES.FLOOR && !hasBomb && !hasEnemy) {
+                        b.c = nc; b.r = nr;
+                    } else {
+                        b.slidingX = 0; b.slidingY = 0;
+                    }
+                    b.slideCounter = 0;
+                }
+            }
+
+            // 3D 同步位置
+            if (meshes.bombs.has(b.id)) {
+                const mesh = meshes.bombs.get(b.id);
+                const wPos = logicToWorld(b.c * TILE_SIZE, b.r * TILE_SIZE);
+                // 平滑移動
+                mesh.position.x += (wPos.x - mesh.position.x) * 0.5;
+                mesh.position.z += (wPos.z - mesh.position.z) * 0.5;
+                
+                // 脈動
+                let scale = 1 + Math.sin(Date.now() / 100) * 0.1;
+                mesh.scale.set(scale, scale, scale);
+            }
+
+            b.timer--;
+            if (b.timer <= 0) explodeBomb(b);
+        }
+
+        // --- 敵人更新 ---
+        for (let i = enemies.length - 1; i >= 0; i--) {
+            let e = enemies[i];
+            
+            // 3D 建立
+            if (!meshes.enemies.has(e.id)) {
+                meshes.enemies.set(e.id, createEnemyMesh(e.type));
+            }
+
+            // 移動邏輯 (同 2D)
+            let dirs = [[0,-1], [0,1], [-1,0], [1,0]];
+            let move = dirs[e.dir];
+            let newX = e.x + move[0] * e.speed;
+            let newY = e.y + move[1] * e.speed;
+            let cr = toGrid(newY), cc = toGrid(newX);
+            let tile = getTile(cc, cr);
+            let hitBomb = bombs.some(b => b.c === cc && b.r === cr);
+            
+            if (tile !== TYPES.FLOOR || hitBomb) {
+                e.dir = Math.floor(Math.random() * 4);
+            } else {
+                if (e.dir < 2) { e.x = snapCenter(e.x); e.y = newY; }
+                else { e.x = newX; e.y = snapCenter(e.y); }
+                e.c = toGrid(e.x); e.r = toGrid(e.y);
+            }
+
+            // 碰玩家
+            if (Math.hypot(e.x - player.x, e.y - player.y) < TILE_SIZE * 0.8) gameOver();
+
+            // 3D 同步
+            const mesh = meshes.enemies.get(e.id);
+            if (mesh) {
+                const wPos = logicToWorld(e.x, e.y); // 注意這裡的 e.x 已經是中心點像素
+                // 這裡有點 trick，因為 logicToWorld 會再加半格，但 e.x 已經是像素中心
+                // 我們直接用像素換算
+                mesh.position.x = (e.x / TILE_SIZE) * UNIT_SIZE + MAP_OFFSET_X; // 不再加 UNIT_SIZE/2 因為 e.x 已經置中
+                mesh.position.z = (e.y / TILE_SIZE) * UNIT_SIZE + MAP_OFFSET_Z;
+                
+                // 史萊姆跳動
+                mesh.position.y = Math.abs(Math.sin(Date.now() / 150)) * 0.5;
+                
+                // 轉向
+                if (e.dir === 2) mesh.rotation.y = -Math.PI/2;
+                if (e.dir === 3) mesh.rotation.y = Math.PI/2;
+            }
+
+            // 碰爆炸 (檢查 Mesh 或 邏輯)
+            // 這裡用邏輯判定
+            let hitExplosion = false;
+            meshes.explosions.forEach(exObj => {
+               // 簡單檢查距離
+               if (Math.abs(exObj.mesh.position.x - mesh.position.x) < 2 && 
+                   Math.abs(exObj.mesh.position.z - mesh.position.z) < 2) {
+                   hitExplosion = true;
+               }
+            });
+            
+            if (hitExplosion) {
+                enemies.splice(i, 1);
+                scene.remove(mesh);
+                meshes.enemies.delete(e.id);
+                updateHUD();
+            }
+        }
+
+        // --- 爆炸特效更新 ---
+        for (let i = meshes.explosions.length - 1; i >= 0; i--) {
+            let ex = meshes.explosions[i];
+            ex.life--;
+            ex.mesh.scale.setScalar(1 + (30-ex.life)/10); // 變大
+            ex.mesh.children.forEach(c => {
+                if(c.material.transparent) c.material.opacity = ex.life / 30;
+            });
+            
+            if (ex.life <= 0) {
+                scene.remove(ex.mesh);
+                meshes.explosions.splice(i, 1);
+            }
+        }
+
+        // --- 出口與道具顯示 ---
+        if (exitPos.revealed && !exitPos.mesh) {
+            exitPos.mesh = createExitMesh(exitPos.y, exitPos.x);
+        }
+        items.forEach(it => {
+            if (!it.hidden && !meshes.items.has(it.id)) {
+                meshes.items.set(it.id, createItemMesh(it.type));
+                const m = meshes.items.get(it.id);
+                const wPos = logicToWorld(it.x * TILE_SIZE, it.y * TILE_SIZE);
+                m.position.set(wPos.x, 0, wPos.z);
+            }
+        });
+        // 道具旋轉
+        meshes.items.forEach(m => {
+            m.rotation.y += 0.05;
+            m.position.y = Math.sin(Date.now() / 200) * 0.5;
+        });
+
+        // --- 粒子更新 ---
+        for(let i=meshes.particles.length-1; i>=0; i--) {
+            let p = meshes.particles[i];
+            p.mesh.position.x += p.velocity.x;
+            p.mesh.position.y += p.velocity.y;
+            p.mesh.position.z += p.velocity.z;
+            p.velocity.y -= 0.02; // 重力
+            if(p.mesh.position.y < 0) p.velocity.y = -p.velocity.y * 0.5; // 地板反彈
+            
+            p.life--;
+            if(p.life <= 0) {
+                scene.remove(p.mesh);
+                meshes.particles.splice(i, 1);
+            }
+        }
+
+        // --- 勝利 ---
+        if (enemies.length === 0 && exitPos.revealed) {
+            const wPos = logicToWorld(player.x, player.y); // 這是像素中心
+            // 轉成世界座標對比
+            const exitWPos = logicToWorld(exitPos.x * TILE_SIZE, exitPos.y * TILE_SIZE);
+            if (Math.abs(wPos.x - exitWPos.x) < 2 && Math.abs(wPos.z - exitWPos.z) < 2) {
+                gameWin();
+            }
+        }
     }
 
-    // Particles logic
-    for(let i=particles.length-1; i>=0; i--) {
-        let p = particles[i];
-        p.x += p.vx;
-        p.y += p.vy;
-        p.life--;
-        if(p.life <= 0) particles.splice(i, 1);
-    }
-
-    // --- Draw ---
-    ctx.clearRect(0, 0, WIDTH, HEIGHT);
-    
-    drawMap();
-    drawItems();
-    drawBombs();
-    
-    // 敵人
-    enemies.forEach(e => drawEnemy(e));
-
-    // 玩家 (如果在無敵閃爍狀態可加 alpha)
-    if (!player.dead) drawCat(player.x, player.y, player.direction, player.walkFrame);
-
-    drawExplosions();
-
-    // 粒子
-    particles.forEach(p => {
-        ctx.fillStyle = p.color;
-        ctx.globalAlpha = p.life / 30;
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, 3, 0, Math.PI*2);
-        ctx.fill();
-    });
-    ctx.globalAlpha = 1.0;
-
-    if (gameRunning) requestAnimationFrame(gameLoop);
+    renderer.render(scene, camera);
 }
 
-// --- 啟動 ---
+// 啟動
+initThree();
 startBtn.addEventListener('click', () => {
-    // 必須由使用者互動觸發 AudioContext
-    if (audioCtx.state === 'suspended') {
-        audioCtx.resume();
-    }
+    if (audioCtx.state === 'suspended') audioCtx.resume();
     resetGame();
 });
 
-// 初始畫面繪製一次
-initMap();
-drawMap();
+// 初始相機旋轉一下作為展示
+let angle = 0;
+function introLoop() {
+    if (!gameRunning) {
+        angle += 0.005;
+        camera.position.x = Math.sin(angle) * 35;
+        camera.position.z = Math.cos(angle) * 35;
+        camera.lookAt(0, 0, 0);
+        renderer.render(scene, camera);
+        requestAnimationFrame(introLoop);
+    }
+}
+introLoop();
 
 </script>
 </body>
